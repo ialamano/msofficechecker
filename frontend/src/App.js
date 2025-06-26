@@ -85,7 +85,7 @@ function App() {
                 // --- API Call to Unified Backend ---
                 // IMPORTANT: Replace 'YOUR_DEPLOYED_BACKEND_URL' with the actual URL of your deployed Flask backend.
                 // For local testing: 'http://127.0.0.1:5000' or 'http://YOUR_LOCAL_IP_ADDRESS:5000'
-                const backendApiUrl = '${process.env.REACT_APP_API_URL}/check-compatibility'; // Adjust for deployment
+                const backendApiUrl = `${process.env.REACT_APP_API_URL}/check-compatibility`; // Adjust for deployment
 
                 const fetchResponse = await fetch(backendApiUrl, {
                     method: 'POST',
