@@ -1,0 +1,7 @@
+Flask
+Flask-Cors
+openpyxl
+python-docx
+python-pptx
+gunicorn
+requests
