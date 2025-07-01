@@ -1,52 +1,67 @@
 import React, { useState } from 'react';
 
 function App() {
-    const [selectedFile, setSelectedFile] = useState(null);
-    const [outputFileUrl, setOutputFileUrl] = useState('');
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState('');
-    const [issues, setIssues] = useState([]);
-    const [fileName, setFileName] = useState(''); // To store the original file name
-    const [fileType, setFileType] = useState(''); // To store the file type for the backend
+    const [selectedFiles, setSelectedFiles] = useState([]); // Array to hold multiple selected files
+    const [processing, setProcessing] = useState(false); // Overall processing state
+    const [globalError, setGlobalError] = useState(''); // General error for the whole process
+    // Array to store results for each processed file:
+    // { id, originalFileName, originalFileType, outputBase64, issuesFound, status, error }
+    const [reports, setReports] = useState([]);
+    const [allReportsGenerated, setAllReportsGenerated] = useState(false); // New state for "Download All" button
 
-    // Function to handle file selection
+    // Function to handle file selection (now supports multiple)
     const handleFileChange = (event) => {
-        const file = event.target.files[0];
-        if (file) {
-            setSelectedFile(file);
-            setFileName(file.name);
-            const type = file.name.split('.').pop().toLowerCase();
-            setFileType(type);
-            setError(''); // Clear previous errors
-            setOutputFileUrl(''); // Clear previous report URL
-            setIssues([]); // Clear previous issues
-        } else {
-            setSelectedFile(null);
-            setFileName('');
-            setFileType('');
-        }
+        const files = Array.from(event.target.files); // Convert FileList to Array
+        setSelectedFiles(files);
+        setGlobalError(''); // Clear previous global errors
+        setReports([]); // Clear previous reports
+        setAllReportsGenerated(false); // Reset download all state
     };
 
-    // Function to handle report generation
-    const handleGenerateReport = async () => {
-        if (!selectedFile) {
-            setError('Please select a file first.');
+    // Function to handle report generation for all selected files
+    const handleGenerateReports = async () => {
+        if (selectedFiles.length === 0) {
+            setGlobalError('Please select at least one file first.');
             return;
         }
 
-        setLoading(true);
-        setError('');
-        setOutputFileUrl('');
-        setIssues([]);
+        setProcessing(true);
+        setGlobalError('');
+        setReports([]); // Clear previous reports before starting new processing
+        setAllReportsGenerated(false); // Reset download all state
 
-        const reader = new FileReader();
-        reader.readAsDataURL(selectedFile); // Read file as Base64
+        const newReports = [];
+        let allSucceeded = true; // Flag to track if all reports generated successfully
 
-        reader.onloadend = async () => {
-            const base64String = reader.result.split(',')[1]; // Extract Base64 part
+        for (let i = 0; i < selectedFiles.length; i++) {
+            const file = selectedFiles[i];
+            const fileId = i; // Simple ID for tracking
+            const originalFileName = file.name;
+            const originalFileType = originalFileName.split('.').pop().toLowerCase();
+
+            // Initialize report status for current file
+            newReports[fileId] = {
+                id: fileId,
+                originalFileName,
+                originalFileType,
+                status: 'Processing...',
+                outputBase64: '',
+                issuesFound: [],
+                error: ''
+            };
+            setReports([...newReports]); // Update UI with processing status
+
+            const reader = new FileReader();
+            const readPromise = new Promise((resolve, reject) => {
+                reader.onloadend = () => resolve(reader.result);
+                reader.onerror = () => reject(new Error('Failed to read file.'));
+                reader.readAsDataURL(file);
+            });
 
             try {
-                // Ensure REACT_APP_API_URL is defined. Netlify injects this.
+                const base64StringWithPrefix = await readPromise;
+                const base64String = base64StringWithPrefix.split(',')[1]; // Extract Base64 part
+
                 const apiUrl = process.env.REACT_APP_API_URL;
                 if (!apiUrl) {
                     throw new Error('Backend API URL is not configured. Please check environment variables.');
@@ -59,52 +74,84 @@ function App() {
                     },
                     body: JSON.stringify({
                         file_base64: base64String,
-                        filename: fileName,
-                        file_type: fileType,
+                        filename: originalFileName,
+                        file_type: originalFileType,
                     }),
                 });
 
                 const data = await response.json();
 
                 if (data.success) {
-                    setOutputFileUrl(`data:application/vnd.openxmlformats-officedocument.${fileType}+xml;base64,${data.output_file_base64}`);
-                    setIssues(data.issues_found);
+                    newReports[fileId] = {
+                        ...newReports[fileId],
+                        status: 'Generated',
+                        outputBase64: data.output_file_base64,
+                        issuesFound: data.issues_found,
+                        error: ''
+                    };
                 } else {
-                    setError(data.error || 'An unexpected error occurred during report generation.');
+                    newReports[fileId] = {
+                        ...newReports[fileId],
+                        status: 'Error',
+                        error: data.error || 'An unexpected error occurred during report generation.'
+                    };
+                    allSucceeded = false; // Mark that at least one failed
                 }
             } catch (err) {
-                console.error("Error generating report:", err);
-                setError(`An unexpected error occurred: ${err.message}. Please try again.`);
-            } finally {
-                setLoading(false);
+                console.error(`Error processing ${originalFileName}:`, err);
+                newReports[fileId] = {
+                    ...newReports[fileId],
+                    status: 'Error',
+                    error: `An unexpected error occurred: ${err.message}.`
+                };
+                allSucceeded = false; // Mark that at least one failed
             }
-        };
-
-        reader.onerror = () => {
-            setLoading(false);
-            setError('Failed to read file.');
-        };
+            setReports([...newReports]); // Update UI after each file is processed
+        }
+        setProcessing(false);
+        setAllReportsGenerated(allSucceeded && newReports.length > 0); // Enable "Download All" if all succeeded
     };
 
-    // Function to handle downloading the generated report
-    const handleDownloadReport = () => {
-        if (outputFileUrl) {
+    // Function to handle downloading a specific generated report
+    const handleDownloadReport = (outputBase64, originalFileName, originalFileType) => {
+        if (outputBase64) {
             const link = document.createElement('a');
-            link.href = outputFileUrl;
-            // Determine a suitable filename for download
-            let downloadFileName = 'compatibility_report';
-            if (fileName) {
-                // Remove original extension and add '.docx', '.pptx', or '.xlsx'
-                const nameWithoutExt = fileName.substring(0, fileName.lastIndexOf('.')) || fileName;
-                downloadFileName = `${nameWithoutExt}_compatibility.${fileType}`;
-            } else {
-                downloadFileName = `compatibility_report.${fileType}`;
+            // Construct the data URL based on the file type
+            let mimeType;
+            switch (originalFileType) {
+                case 'docx':
+                    mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+                    break;
+                case 'pptx':
+                    mimeType = 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+                    break;
+                case 'xlsx':
+                case 'xlsm':
+                    mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+                    break;
+                default:
+                    mimeType = 'application/octet-stream'; // Generic binary
             }
-            link.download = downloadFileName;
+
+            link.href = `data:${mimeType};base64,${outputBase64}`;
+
+            // Determine a suitable filename for download
+            const nameWithoutExt = originalFileName.substring(0, originalFileName.lastIndexOf('.')) || originalFileName;
+            link.download = `${nameWithoutExt}_compatibility_report.${originalFileType}`;
+
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
         }
+    };
+
+    // New function to download all generated reports
+    const handleDownloadAllReports = () => {
+        reports.forEach(report => {
+            if (report.status === 'Generated' && report.outputBase64) {
+                handleDownloadReport(report.outputBase64, report.originalFileName, report.originalFileType);
+            }
+        });
     };
 
     return (
@@ -114,7 +161,7 @@ function App() {
                     Office File Compatibility Checker
                 </h1>
                 <p className="text-center text-gray-600 mb-8">
-                    Upload your .docx, .pptx, or .xlsx file to check for compatibility issues when converting to Google Docs, Slides, or Sheets.
+                    Upload your .docx, .pptx, or .xlsx files to check for compatibility issues when converting to Google Docs, Slides, or Sheets.
                 </p>
 
                 {/* File Input */}
@@ -123,6 +170,7 @@ function App() {
                         type="file"
                         onChange={handleFileChange}
                         accept=".docx,.pptx,.xlsx,.xlsm"
+                        multiple // Allow multiple file selection
                         className="block w-full text-sm text-gray-700
                                    file:mr-4 file:py-2 file:px-4
                                    file:rounded-full file:border-0
@@ -130,80 +178,112 @@ function App() {
                                    file:bg-indigo-50 file:text-indigo-700
                                    hover:file:bg-indigo-100 cursor-pointer rounded-lg border border-gray-300 p-2"
                     />
-                    {selectedFile && (
-                        <span className="text-gray-600 text-sm mt-2 sm:mt-0">
-                            Selected: {selectedFile.name}
-                        </span>
-                    )}
                 </div>
+
+                {/* Display selected files */}
+                {selectedFiles.length > 0 && (
+                    <div className="mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                        <h3 className="text-lg font-semibold text-gray-700 mb-2">Selected Files:</h3>
+                        <ul className="list-disc list-inside text-gray-600">
+                            {selectedFiles.map((file, index) => (
+                                <li key={index}>{file.name}</li>
+                            ))}
+                        </ul>
+                    </div>
+                )}
 
                 {/* Action Buttons */}
                 <div className="flex flex-col sm:flex-row justify-center items-center space-y-4 sm:space-y-0 sm:space-x-4 mb-8">
                     <button
-                        onClick={handleGenerateReport}
-                        disabled={!selectedFile || loading}
+                        onClick={handleGenerateReports}
+                        disabled={selectedFiles.length === 0 || processing}
                         className={`px-8 py-3 rounded-full text-lg font-bold transition-all duration-300
-                                    ${!selectedFile || loading
+                                    ${selectedFiles.length === 0 || processing
                                         ? 'bg-gray-300 text-gray-600 cursor-not-allowed'
                                         : 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-md hover:shadow-lg transform hover:-translate-y-0.5'
                                     }`}
                     >
-                        {loading ? 'Generating...' : 'Generate Compatibility Report'}
+                        {processing ? 'Processing All Files...' : 'Generate Compatibility Reports'}
                     </button>
 
-                    {outputFileUrl && (
+                    {/* New "Download All Reports" button */}
+                    {allReportsGenerated && selectedFiles.length > 0 && (
                         <button
-                            onClick={handleDownloadReport}
+                            onClick={handleDownloadAllReports}
                             className={`px-8 py-3 rounded-full text-lg font-bold transition-all duration-300
-                                        bg-green-500 text-white hover:bg-green-600 shadow-md hover:shadow-lg transform hover:-translate-y-0.5`}
+                                        bg-purple-600 text-white hover:bg-purple-700 shadow-md hover:shadow-lg transform hover:-translate-y-0.5`}
                         >
-                            Download Report
+                            Download All Reports
                         </button>
                     )}
                 </div>
 
-                {/* Loading / Error Messages */}
-                {loading && (
+                {/* Global Loading / Error Messages */}
+                {processing && (
                     <div className="text-center text-indigo-600 font-medium text-lg mb-4">
-                        Processing your file, please wait...
+                        Processing your files, please wait...
                     </div>
                 )}
 
-                {error && (
+                {globalError && (
                     <div className="bg-red-100 border border-red-400 text-red-700 px-6 py-4 rounded-lg mb-4 text-center">
                         <p className="font-bold">Error:</p>
-                        <p>{error}</p>
+                        <p>{globalError}</p>
                     </div>
                 )}
 
-                {/* Display Report Link and Issues */}
-                {outputFileUrl && !loading && !error && (
-                    <div className="mt-8 p-6 bg-blue-50 border border-blue-200 rounded-xl shadow-inner">
-                        <h2 className="text-2xl font-semibold text-gray-700 mb-4 text-center">Compatibility Report Generated!</h2>
-
-                        {issues.length > 0 ? (
-                            <>
-                                <h3 className="text-xl font-medium text-red-600 mb-3">
-                                    <span className="inline-block mr-2">⚠️</span> Potential Issues:
+                {/* Display Individual Reports */}
+                {reports.length > 0 && !processing && (
+                    <div className="mt-8 space-y-6">
+                        <h2 className="text-3xl font-bold text-gray-800 text-center mb-6">Generated Reports</h2>
+                        {reports.map((report) => (
+                            <div key={report.id} className="p-6 bg-blue-50 border border-blue-200 rounded-xl shadow-inner">
+                                <h3 className="text-xl font-semibold text-gray-700 mb-3">
+                                    Report for: <span className="text-indigo-700">{report.originalFileName}</span>
                                 </h3>
-                                <ul className="list-disc list-inside text-gray-700 mb-4 space-y-2">
-                                    {issues.map((issue, index) => (
-                                        <li key={index} className="bg-red-50 p-2 rounded-md border border-red-100">
-                                            {issue}
-                                        </li>
-                                    ))}
-                                </ul>
-                            </>
-                        ) : (
-                            <p className="text-lg text-green-700 font-medium text-center mb-4">
-                                🎉 No major compatibility issues detected.
-                                Always perform a manual review after conversion to Google Docs/Slides/Sheets.
-                            </p>
-                        )}
 
-                        <p className="text-center text-gray-600 mt-4">
-                            Click the "Download Report" button above to save the generated compatibility report.
-                        </p>
+                                {report.status === 'Error' && (
+                                    <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg mb-4">
+                                        <p className="font-bold">Error processing this file:</p>
+                                        <p>{report.error}</p>
+                                    </div>
+                                )}
+
+                                {report.status === 'Generated' && (
+                                    <>
+                                        {report.issuesFound.length > 0 ? (
+                                            <>
+                                                <h4 className="text-lg font-medium text-red-600 mb-2">
+                                                    <span className="inline-block mr-2">⚠️</span> Potential Issues:
+                                                </h4>
+                                                <ul className="list-disc list-inside text-gray-700 mb-4 space-y-1">
+                                                    {report.issuesFound.map((issue, idx) => (
+                                                        <li key={idx} className="bg-red-50 p-2 rounded-md border border-red-100">
+                                                            {issue}
+                                                        </li>
+                                                    ))}
+                                                </ul>
+                                            </>
+                                        ) : (
+                                            <p className="text-md text-green-700 font-medium text-center mb-4">
+                                                🎉 No major compatibility issues detected for this file.
+                                                Always perform a manual review after conversion.
+                                            </p>
+                                        )}
+
+                                        <div className="flex justify-center mt-4">
+                                            <button
+                                                onClick={() => handleDownloadReport(report.outputBase64, report.originalFileName, report.originalFileType)}
+                                                className={`px-6 py-2 rounded-full text-md font-bold transition-all duration-300
+                                                            bg-green-500 text-white hover:bg-green-600 shadow-md hover:shadow-lg transform hover:-translate-y-0.5`}
+                                            >
+                                                Download Report for {report.originalFileName}
+                                            </button>
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+                        ))}
                     </div>
                 )}
             </div>
