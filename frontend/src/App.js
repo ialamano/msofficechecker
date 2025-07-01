@@ -147,9 +147,12 @@ function App() {
 
     // New function to download all generated reports
     const handleDownloadAllReports = () => {
-        reports.forEach(report => {
+        // Introduce a slight delay between downloads to prevent browser blocking
+        reports.forEach((report, index) => {
             if (report.status === 'Generated' && report.outputBase64) {
-                handleDownloadReport(report.outputBase64, report.originalFileName, report.originalFileType);
+                setTimeout(() => {
+                    handleDownloadReport(report.outputBase64, report.originalFileName, report.originalFileType);
+                }, index * 500); // 500ms delay for each subsequent download
             }
         });
     };
