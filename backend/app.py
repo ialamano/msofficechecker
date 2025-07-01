@@ -46,10 +46,10 @@ def check_word_google_docs_compatibility(input_file_base64, original_filename="d
         issues_found = []
         original_comments = {c.id: c.text for c in doc.comments}
 
-        # Check for VBA Macros
-        if doc.has_macros:
-            issues_found.append(
-                'VBA Macros: This document contains VBA macros, which are not supported in Google Docs and will be lost upon conversion. Consider converting macro functionality to Google Apps Script if needed.')
+        # Removed the problematic 'if doc.has_macros:' check as python-docx does not directly support it.
+        # A general warning about macros is still relevant for users.
+        issues_found.append(
+            'VBA Macros: This document might contain VBA macros, which are not supported in Google Docs and will be lost upon conversion. Consider converting macro functionality to Google Apps Script if needed.')
 
         # Check for Comments
         if original_comments:
@@ -400,7 +400,6 @@ def check_excel_google_sheets_compatibility(input_file_base64, original_filename
                     issues_found.append(
                         'Conditional Formatting: Some sheets contain conditional formatting rules. Review them carefully after conversion.')
 
-            # Check for Data Validation
             if original_ws.data_validations:
                 sheet_specific_warnings.append(
                     'Data Validation: This sheet uses data validation. Simple rules usually transfer, but custom formulas or complex lists might not.')
