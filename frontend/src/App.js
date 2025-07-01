@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import JSZip from 'jszip'; // Import JSZip library
+import { saveAs } from 'file-saver'; // For saving the generated zip file
 
 function App() {
     const [selectedFiles, setSelectedFiles] = useState([]); // Array to hold multiple selected files
@@ -7,7 +9,8 @@ function App() {
     // Array to store results for each processed file:
     // { id, originalFileName, originalFileType, outputBase64, issuesFound, status, error }
     const [reports, setReports] = useState([]);
-    const [allReportsGenerated, setAllReportsGenerated] = useState(false); // New state for "Download All" button
+    const [allReportsGenerated, setAllReportsGenerated] = useState(false); // State for "Download All" button visibility
+    const [downloadAllMessage, setDownloadAllMessage] = useState(''); // Message for download all status
 
     // Function to handle file selection (now supports multiple)
     const handleFileChange = (event) => {
@@ -16,6 +19,7 @@ function App() {
         setGlobalError(''); // Clear previous global errors
         setReports([]); // Clear previous reports
         setAllReportsGenerated(false); // Reset download all state
+        setDownloadAllMessage(''); // Clear download all message
     };
 
     // Function to handle report generation for all selected files
@@ -29,6 +33,7 @@ function App() {
         setGlobalError('');
         setReports([]); // Clear previous reports before starting new processing
         setAllReportsGenerated(false); // Reset download all state
+        setDownloadAllMessage(''); // Clear download all message
 
         const newReports = [];
         let allSucceeded = true; // Flag to track if all reports generated successfully
@@ -110,6 +115,11 @@ function App() {
         }
         setProcessing(false);
         setAllReportsGenerated(allSucceeded && newReports.length > 0); // Enable "Download All" if all succeeded
+        if (allSucceeded && newReports.length > 0) { // Check if any reports were generated successfully
+            setDownloadAllMessage('All reports generated! Click "Download All Reports" to get a ZIP file.');
+        } else {
+            setDownloadAllMessage('');
+        }
     };
 
     // Function to handle downloading a specific generated report
@@ -145,16 +155,35 @@ function App() {
         }
     };
 
-    // New function to download all generated reports
-    const handleDownloadAllReports = () => {
-        // Introduce a slight delay between downloads to prevent browser blocking
-        reports.forEach((report, index) => {
+    // New function to download all generated reports as a ZIP file
+    const handleDownloadAllReports = async () => {
+        setDownloadAllMessage('Preparing ZIP file for download...');
+        const zip = new JSZip();
+        let filesAdded = 0;
+
+        reports.forEach(report => {
             if (report.status === 'Generated' && report.outputBase64) {
-                setTimeout(() => {
-                    handleDownloadReport(report.outputBase64, report.originalFileName, report.originalFileType);
-                }, index * 500); // 500ms delay for each subsequent download
+                const nameWithoutExt = report.originalFileName.substring(0, report.originalFileName.lastIndexOf('.')) || report.originalFileName;
+                const fileNameInZip = `${nameWithoutExt}_compatibility_report.${report.originalFileType}`;
+                // Add the file to the zip. JSZip takes base64 string directly.
+                zip.file(fileNameInZip, report.outputBase64, { base64: true });
+                filesAdded++;
             }
         });
+
+        if (filesAdded === 0) {
+            setDownloadAllMessage('No successfully generated reports to download.');
+            return;
+        }
+
+        try {
+            const content = await zip.generateAsync({ type: "blob" });
+            saveAs(content, "compatibility_reports.zip");
+            setDownloadAllMessage('ZIP file downloaded successfully!');
+        } catch (err) {
+            console.error("Error generating ZIP file:", err);
+            setDownloadAllMessage(`Error creating ZIP file: ${err.message}.`);
+        }
     };
 
     return (
@@ -216,7 +245,7 @@ function App() {
                             className={`px-8 py-3 rounded-full text-lg font-bold transition-all duration-300
                                         bg-purple-600 text-white hover:bg-purple-700 shadow-md hover:shadow-lg transform hover:-translate-y-0.5`}
                         >
-                            Download All Reports
+                            Download All Reports (ZIP)
                         </button>
                     )}
                 </div>
@@ -232,6 +261,13 @@ function App() {
                     <div className="bg-red-100 border border-red-400 text-red-700 px-6 py-4 rounded-lg mb-4 text-center">
                         <p className="font-bold">Error:</p>
                         <p>{globalError}</p>
+                    </div>
+                )}
+
+                {/* Download All Reports Message */}
+                {downloadAllMessage && (
+                    <div className="bg-yellow-100 border border-yellow-400 text-yellow-700 px-6 py-4 rounded-lg mb-4 text-center">
+                        <p>{downloadAllMessage}</p>
                     </div>
                 )}
 
